@@ -1,2 +1,70 @@
-from pytorch_lightni
-def
+import torch
+from typing import Tuple
+from pytorch_lightning import LightningModule
+from torch import nn
+from torch import Tensor
+
+
+class NeRF(LightningModule):
+    def __init__(self, position_dim: int, direction_dim: int) -> None:
+        super(NeRF, self).__init__()
+
+        self.criterion = nn.MSELoss(reduction="mean")
+
+        pre_skip = [nn.Linear(position_dim, 256), nn.ReLU()]
+        for _ in range(4):
+            pre_skip.append(nn.Linear(256, 256))
+            pre_skip.append(nn.ReLU())
+        self.pre_skip = nn.Sequential(*pre_skip)
+
+        self.skip = nn.Sequential(nn.Linear(256 + position_dim, 256), nn.ReLU())
+
+        post_skip = []
+        for _ in range(4):
+            post_skip.append(nn.Linear(256, 256))
+            post_skip.append(nn.ReLU())
+        self.post_skip = nn.Sequential(*post_skip)
+
+        post_depth = [nn.Linear(256 + direction_dim, 128), nn.ReLU()]
+        for _ in range(4):
+            post_depth.append(nn.Linear(128, 128))
+            post_depth.append(nn.ReLU())
+        self.post_depth = nn.Sequential(*post_depth)
+
+        self.output_depth = nn.Sequential(
+            nn.Linear(in_features=256, out_features=1), nn.ReLU()
+        )
+        self.output_color = nn.Sequential(
+            nn.Linear(in_features=256, out_features=3), nn.Sigmoid()
+        )
+
+    def forward(self, x: Tensor, d: Tensor) -> Tuple[Tensor, Tensor]:
+        """
+        Inputs -
+            x [B * (6*Lp)]: Positionally encoded position
+            d [B * (6*Ld)]: Positionally encoded direction vector
+        Outputs -
+            sigma [B]: Density at the given position
+            color [B]: Color at the given postion
+        """
+        t = self.pre_skip(x)
+        x = torch.cat((t, x), dim=1)
+        x = self.skip(x)
+        x = self.post_skip(x)
+
+        sigma = self.output_depth(x)
+        x = torch.cat((d, x), dim=1)
+        x = self.post_depth(x)
+
+        color = self.output_color(x)
+
+        return sigma, color
+
+    def training_step(self, batch: Tensor, _) -> Tensor:
+        """
+        Inputs -
+            batch [B
+
+        Outputs -
+            loss [B]: The MSE loss between ground truth and predicted color
+        """

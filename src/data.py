@@ -10,6 +10,7 @@ from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
 from pytorch_lightning import LightningDataModule
 
+
 class NeRFDataSet(Dataset):
     def __init__(self, mode: str, data_dir: Path):
         self.mode = mode
@@ -22,10 +23,10 @@ class NeRFDataSet(Dataset):
         mat = np.asarray(self.frames[idx]["transform_matrix"])
 
         # Get position
-        pos = mat[:3,3]
+        pos = mat[:3, 3]
 
         # Get rotation
-        ang = Rotation.from_matrix(mat[:3,:3]).as_euler('xyz')
+        ang = Rotation.from_matrix(mat[:3, :3]).as_euler("xyz")
 
         # Prepare input tensor
         inp = torch.Tensor([*pos, ang[0], ang[2]])
