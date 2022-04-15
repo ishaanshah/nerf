@@ -1,15 +1,17 @@
 import torch
 from typing import Tuple
-from pytorch_lightning import LightningModule
 from torch import nn
 from torch import Tensor
 
 
-class NeRF(LightningModule):
+class NeRFModel(nn.Module):
     def __init__(self, position_dim: int, direction_dim: int) -> None:
-        super(NeRF, self).__init__()
-
-        self.criterion = nn.MSELoss(reduction="mean")
+        """
+        Inputs -
+            position_dim: Number of elements used to encode position
+            direction_dim: Number of elements used to encode viewing direcion
+        """
+        super(NeRFModel, self).__init__()
 
         pre_skip = [nn.Linear(position_dim, 256), nn.ReLU()]
         for _ in range(4):
@@ -41,7 +43,7 @@ class NeRF(LightningModule):
     def forward(self, x: Tensor, d: Tensor) -> Tuple[Tensor, Tensor]:
         """
         Inputs -
-            x [B * (6*Lp)]: Positionally encoded position
+            x [B * (6*Lx)]: Positionally encoded position
             d [B * (6*Ld)]: Positionally encoded direction vector
         Outputs -
             sigma [B]: Density at the given position
@@ -59,12 +61,3 @@ class NeRF(LightningModule):
         color = self.output_color(x)
 
         return sigma, color
-
-    def training_step(self, batch: Tensor, _) -> Tensor:
-        """
-        Inputs -
-            batch [B
-
-        Outputs -
-            loss [B]: The MSE loss between ground truth and predicted color
-        """

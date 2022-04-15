@@ -1,17 +1,17 @@
 import torch
-import numpy as np
+from .model import NeRFModel
 from torch import Tensor
 from typing import Tuple
 
 
-def positional_encoding(vec, L=5):
+def positional_encoding(vec: Tensor, L: int) -> Tensor:
     """Postionally encode a batch of numbers
 
     Inputs -
-        vec [N]: Batch of features to perform positional encoding on
+        vec [B]: Batch of features to perform positional encoding on
         L: Number of terms to use in positional encoding
     Outputs -
-        res [N * L]: Encoded features
+        res [B * 2L]: Encoded features
     """
     powers = torch.pow(2, torch.arange(L))
     x = torch.pi * torch.unsqueeze(vec, dim=1) * powers
@@ -27,8 +27,8 @@ def get_rays(mat: Tensor, f: float, h: int, w: int) -> Tuple[Tensor, Tensor]:
         f: Focal length of camera
         h, w: Dimensions of image
     Outputs -
-        o [w * h * 3]: Origin of all the rays in the image
-        d [w * h * 3]: Direction of all the rays in the image
+        o [h * w * 3]: Origin of all the rays in the image
+        d [h * w * 3]: Direction of all the rays in the image
 
     Note -
         Taken from original NeRF implementation
@@ -37,36 +37,98 @@ def get_rays(mat: Tensor, f: float, h: int, w: int) -> Tuple[Tensor, Tensor]:
     y, x = torch.meshgrid(torch.arange(h), torch.arange(w))
     d = torch.dstack([(x - w / 2) / f, (y - h / 2) / f, -torch.ones_like(y)])
     d = (d.unsqueeze(2) * mat[:3, :3]).sum(dim=-1)
-    o = torch.broadcast_to(mat[:3, 3], (w, h))
+    o = torch.broadcast_to(mat[:3, 3], (w, h, 3))
+    # Swap w,h axis
+    o = torch.transpose(o, 0, 1)
+    d = torch.transpose(d, 0, 1)
     return o, d
 
 
-def render():
-    """Takes in as input position and direction of ray, and outputs a color
+def render(
+    o: Tensor,
+    d: Tensor,
+    t: Tensor,
+    model_coarse: NeRFModel,
+    model_fine: NeRFModel,
+    Lx: int,
+    Ld: int,
+) -> Tuple[Tensor, Tensor]:
+    """Render color along a ray
 
     Inputs -
-        postions []:
+        o [B * 3]: Origin of the ray
+        d [B * 3]: Direction of the ray
+        t [B * n]: Points to sample on the ray
+        model_coarse/fine: Coarse and fine NeRF models
+        Lx/Ld: Number of components to use for positional encoding
     """
-    pass
+    B, n = t.shape
+    pos = torch.broadcast_to(o, (n, B, 3)).transpose(0, 1)
+    pos = pos + t[..., None] * d[:, None, :]  # B * n * 3
+
+    # Perform positional encoding on position and direction vectors
+    encoded_pos = torch.zeros(B, n, Lx * 6)
+    encoded_dir = torch.zeros(B, Ld * 6)
+    for i in range(3):
+        encoded_pos[:, :, i * 2 * Lx : (i + 1) * 2 * Lx] = positional_encoding(
+            pos[:, :, i].flatten(), 10
+        ).reshape(B, n, -1)
+        encoded_dir[:, :, i * 2 * Ld : (i + 1) * 2 * Lx] = positional_encoding(
+            d[:, i], Ld
+        )
+    encoded_dir = encoded_dir[:, None, :].repeat(1, n, 1)
+
+    # Get color with coarse sampling
+    sigma, color = model_coarse(
+        encoded_pos.reshape(-1, Lx * 6), encoded_dir.reshape(-1, Ld * 6)
+    )
+    sigma = sigma.reshape(B, n)
+    color = color.reshape(B, n)
+
+    # Apply rendering equation
+    delta = t[:, 1:] - t[:, :-1]
+    delta = torch.cat([delta, 1e9 * torch.ones_like(delta[:, :1])], dim=-1)
+
+    # Multiply each distance by the norm of its corresponding direction ray
+    # to convert to real world distance (accounts for non-unit directions).
+    delta = delta * torch.norm(dir.unsqueeze(1), dim=-1)
+
+    sig_del = sigma * delta
+    alpha = 1 - torch.exp(-sig_del)
+    t = torch.cumprod(1 - alpha + 1e-10, dim=-1)
+    t = torch.cat((torch.ones_like(alpha[:, :1]), t[:, :-1]), dim=-1)
+
+    w = alpha * t
+    c = w.unsqueeze(-1) * color
+
+    # TODO: Add white backround parameter
+
+    return c, w
+    # TODO: Do fine sampling
 
 
-def sample_coarse(n: int) -> Tensor:
+def sample_coarse(B: int, n: int, near: float, far: float) -> Tensor:
     """Use stratified sampling to get 'n' samples along the ray
 
     Inputs -
+        B: Batch size
         n: Number of points to sample
+        near/far: Bounds of the scene
     Ouptut -
-        samples: The sampled points
+        samples [B * n]: The sampled points
     """
-    samples = []
+    samples = torch.zeros((B, n), dtype=torch.float)
     for i in range(n):
-        samples.append(np.random.uniform(i / n, (i + 1) / n))
-    return torch.Tensor(samples)
+        l = i / n
+        h = (i + 1) / n
+        samples[:, i] = (h - l) * torch.rand(B) + l
+    samples = near * (1 - samples) + far * samples
+    return samples
 
 
 def sample_fine(nf: int, coarse: Tensor, weights: Tensor) -> Tensor:
     """Use inverse transform sampling to sample points
-    based upon distribution of density along a ray
+       based upon distribution of density along a ray
 
     Inputs -
         nf: Number of points to sample excluding the coarse points
@@ -78,7 +140,7 @@ def sample_fine(nf: int, coarse: Tensor, weights: Tensor) -> Tensor:
         https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L183
 
     """
-    # TODO: Check if function has to be differentiable
+    # TODO: Check if function has to be differentiable, if not use Categorical
     # Prevent NaN
     weights = weights + 1e-5
 
