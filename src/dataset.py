@@ -31,13 +31,14 @@ class NeRFBlenderDataSet(Dataset):
         self.data_dir = data_dir
         self.valid_count = valid_count
         self.test_count = test_count
+        self.white_bck = True
 
         with open(data_dir / f"transforms_{mode}.json") as f:
             self.frames = json.load(f)
 
         # Dimensions of image
-        self.w = np.floor(800 * scale)
-        self.h = np.floor(800 * scale)
+        self.w = int(np.floor(800 * scale))
+        self.h = int(np.floor(800 * scale))
 
         # Focal length
         self.f = (self.w / 2) * (1 / np.tan(self.frames["camera_angle_x"] / 2))
@@ -89,7 +90,7 @@ class NeRFBlenderDataSet(Dataset):
                 self.far,
             )
         else:
-            frame = self.frames[idx]
+            frame = self.frames["frames"][idx]
             o, d, img = self.gen_from_frame(frame)
             return o, d, img, self.near, self.far
 
@@ -97,8 +98,10 @@ class NeRFBlenderDataSet(Dataset):
         if self.mode == "train":
             return self.rgbs.shape[0]
         elif self.mode == "val":
-            # TODO: Handle case with -1
+            if self.valid_count < 0:
+                return len(self.frames["frames"])
             return self.valid_count
         else:
-            # TODO: Handle case with -1
+            if self.test_count < 0:
+                return len(self.frames["frames"])
             return self.test_count

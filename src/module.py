@@ -50,15 +50,25 @@ class NeRFModule(LightningModule):
         self.wandb_logger = wandb_logger
         self.save_hyperparameters()
 
-        self.data_dir = Path(args.data_dir)
-
+        # Models
         self.model_coarse = NeRFModel(args.lx * 6, args.ld * 6)
         self.model_fine = NeRFModel(args.lx * 6, args.ld * 6)
 
+        # Loss
         self.criterion = nn.MSELoss(reduction="mean")
 
+        # Metrics
         self.psnr = metrics.PeakSignalNoiseRatio()
         self.ssim = metrics.StructuralSimilarityIndexMeasure()
+
+        # Create datasets
+        data_dir = Path(args.data_dir)
+        self.train_dataset = NeRFBlenderDataSet(
+            mode="train", data_dir=data_dir, scale=self.args.scale
+        )
+        self.val_dataset = NeRFBlenderDataSet(
+            mode="val", data_dir=data_dir, scale=self.args.scale
+        )
 
     def forward(self, batch) -> Tuple[Tensor, Tensor]:
         """
@@ -72,7 +82,7 @@ class NeRFModule(LightningModule):
         Outputs -
             loss: MSELoss between predicted and target color
         """
-        o, d, c, near, far = batch
+        o, d, _, near, far = batch
         B = o.shape[0]
 
         # Get coarse color
@@ -87,6 +97,7 @@ class NeRFModule(LightningModule):
             self.model_fine,
             self.args.lx,
             self.args.ld,
+            self.train_dataset.white_bck,
         )
 
     def training_step(self, batch, _) -> Tensor:
@@ -126,7 +137,8 @@ class NeRFModule(LightningModule):
             columns = ["ground_truth", "predicted"]
             data = []
             # TODO: Fix this to be dataset agnostic
-            w = h = np.floor(800 * self.args.scale)
+            w = np.floor(self.val_dataset.w * self.args.scale)
+            h = np.floor(self.val_dataset.h * self.args.scale)
             for output in outputs:
                 gt = output["gt"].reshape(h, w, 3).cpu().numpy()
                 pred = output["pred"].reshape(h, w, 3).cpu().numpy()
@@ -135,11 +147,8 @@ class NeRFModule(LightningModule):
             self.wandb_logger.log_table(key="results", columns=columns, data=data)
 
     def train_dataloader(self) -> DataLoader:
-        dataset = NeRFBlenderDataSet(
-            mode="train", data_dir=self.data_dir, scale=self.args.scale
-        )
         return DataLoader(
-            dataset,
+            self.train_dataset,
             batch_size=self.args.batch_size,
             shuffle=True,
             num_workers=4,
@@ -147,11 +156,12 @@ class NeRFModule(LightningModule):
         )
 
     def val_dataloader(self) -> DataLoader:
-        dataset = NeRFBlenderDataSet(
-            mode="val", data_dir=self.data_dir, scale=self.args.scale
-        )
         return DataLoader(
-            dataset, batch_size=1, shuffle=False, num_workers=4, pin_memory=True
+            self.val_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
         )
 
     # TODO: Uncomment this later

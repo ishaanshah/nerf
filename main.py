@@ -3,6 +3,7 @@ from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.loggers import WandbLogger
 from src.module import NeRFModule
 
+
 def main(args):
     wandb_logger = None
 
@@ -14,9 +15,9 @@ def main(args):
         wandb_logger = WandbLogger(project="nerf")
         logger = wandb_logger
     trainer = Trainer.from_argparse_args(
-            args,
-            logger=logger,
-        )
+        args,
+        logger=logger,
+    )
 
     # Create the model
     model = NeRFModule(args, wandb_logger)
@@ -24,12 +25,18 @@ def main(args):
     # Train the model
     trainer.fit(model)
 
+
 if __name__ == "__main__":
     parser = ArgumentParser()
 
     # Program specific arguments
-    parser.add_argument("dataset", type=str, help="path to dataset")
-    parser.add_argument("--batch_size", type=int, default=4096, help="batch size to train with")
+    parser.add_argument("data_dir", type=str, help="path to dataset")
+    parser.add_argument(
+        "--batch_size", type=int, default=4096, help="batch size to train with"
+    )
+    parser.add_argument(
+        "--scale", type=float, default=1.0, help="scaling factor for images"
+    )
 
     # Model specific arguments
     parser = NeRFModule.add_model_specific_args(parser)

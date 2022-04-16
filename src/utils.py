@@ -34,7 +34,7 @@ def get_rays(mat: Tensor, f: float, h: int, w: int) -> Tuple[Tensor, Tensor]:
         Taken from original NeRF implementation
         https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L123
     """
-    y, x = torch.meshgrid(torch.arange(h), torch.arange(w))
+    y, x = torch.meshgrid(torch.arange(h), torch.arange(w), indexing="xy")
     d = torch.dstack([(x - w / 2) / f, (y - h / 2) / f, -torch.ones_like(y)])
     d = (d.unsqueeze(2) * mat[:3, :3]).sum(dim=-1)
     o = torch.broadcast_to(mat[:3, 3], (w, h, 3))
@@ -52,6 +52,7 @@ def render(
     model_fine: NeRFModel,
     Lx: int,
     Ld: int,
+    white_bck: bool,
 ) -> Tuple[Tensor, Tensor]:
     """Render color along a ray
 
@@ -61,6 +62,7 @@ def render(
         t [B * n]: Points to sample on the ray
         model_coarse/fine: Coarse and fine NeRF models
         Lx/Ld: Number of components to use for positional encoding
+        white_bck: Whether the image has white background
     """
     B, n = t.shape
     pos = torch.broadcast_to(o, (n, B, 3)).transpose(0, 1)
@@ -71,11 +73,11 @@ def render(
     encoded_dir = torch.zeros(B, Ld * 6)
     for i in range(3):
         encoded_pos[:, :, i * 2 * Lx : (i + 1) * 2 * Lx] = positional_encoding(
-            pos[:, :, i].flatten(), 10
+            pos[:, :, i].flatten(), Lx
         ).reshape(B, n, -1)
-        encoded_dir[:, :, i * 2 * Ld : (i + 1) * 2 * Lx] = positional_encoding(
-            d[:, i], Ld
-        )
+        encoded_dir[:, i * 2 * Ld : (i + 1) * 2 * Ld] = positional_encoding(
+            d[:, i].flatten(), Ld
+        ).reshape(B, -1)
     encoded_dir = encoded_dir[:, None, :].repeat(1, n, 1)
 
     # Get color with coarse sampling
@@ -101,19 +103,21 @@ def render(
     w = alpha * t
     c = w.unsqueeze(-1) * color
 
-    # TODO: Add white backround parameter
+    # If background is white set color to 1 where alpha is 0
+    if white_bck:
+        c = c + 1 - w.sum(1)
 
     return c, w
     # TODO: Do fine sampling
 
 
-def sample_coarse(B: int, n: int, near: float, far: float) -> Tensor:
+def sample_coarse(B: int, n: int, near: Tensor, far: Tensor) -> Tensor:
     """Use stratified sampling to get 'n' samples along the ray
 
     Inputs -
         B: Batch size
         n: Number of points to sample
-        near/far: Bounds of the scene
+        near/far [B]: Bounds of the scene
     Ouptut -
         samples [B * n]: The sampled points
     """
@@ -122,7 +126,7 @@ def sample_coarse(B: int, n: int, near: float, far: float) -> Tensor:
         l = i / n
         h = (i + 1) / n
         samples[:, i] = (h - l) * torch.rand(B) + l
-    samples = near * (1 - samples) + far * samples
+    samples = near.unsqueeze(-1) * (1 - samples) + far.unsqueeze(-1) * samples
     return samples
 
 
