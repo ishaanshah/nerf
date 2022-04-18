@@ -121,11 +121,10 @@ def sample_coarse(B: int, n: int, near: Tensor, far: Tensor) -> Tensor:
     Ouptut -
         samples [B * n]: The sampled points
     """
-    samples = torch.zeros((B, n), dtype=torch.float)
-    for i in range(n):
-        l = i / n
-        h = (i + 1) / n
-        samples[:, i] = (h - l) * torch.rand(B) + l
+    samples = torch.linspace(0, 1, n+1)
+    samples = samples.expand(B, n+1)
+    disp = torch.rand_like(samples) / (n+1)
+    samples = (samples + disp)[...,:-1]
     samples = near.unsqueeze(-1) * (1 - samples) + far.unsqueeze(-1) * samples
     return samples
 

@@ -76,7 +76,7 @@ class NeRFBlenderDataSet(Dataset):
         bkg = Image.new("RGBA", img.size, (255, 255, 255))
         img = Image.alpha_composite(bkg, img).convert("RGB")
         img = img.resize((self.w, self.h))
-        img = F.to_tensor(img)
+        img = F.to_tensor(img).double()
         img = img.reshape(3, -1).t()
         return o, d, img
 

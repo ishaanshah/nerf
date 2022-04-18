@@ -107,41 +107,43 @@ class NeRFModule(LightningModule):
         c_loss = self.criterion(cp, c)
 
         # Logging
+        # TODO: Fix SSIM
         psnr = self.psnr(cp, c)
-        ssim = self.ssim(cp, c)
+        # ssim = self.ssim(cp, c)
         self.log("train/c_loss", c_loss)
-        self.log("train/loss", c_loss, prog_bar=True)
+        self.log("train/loss", c_loss)
         self.log("train/psnr", psnr, prog_bar=True)
-        self.log("train/ssim", ssim)
+        # self.log("train/ssim", ssim)
 
         return c_loss
 
     def validation_step(self, batch, _) -> dict:
-        _, _, c, _, _ = batch
+        nbatch = [i.squeeze(0) for i in batch]
+        _, _, c, _, _ = nbatch
 
-        cp, w = self(batch)
+        cp, w = self(nbatch)
         c_loss = self.criterion(cp, c)
 
         # Logging
         psnr = self.psnr(cp, c)
-        ssim = self.ssim(cp, c)
+        # ssim = self.ssim(cp, c)
         self.log("val/c_loss", c_loss)
         self.log("val/loss", c_loss)
         self.log("val/psnr", psnr)
-        self.log("val/ssim", ssim)
+        # self.log("val/ssim", ssim)
         return {"pred": cp, "gt": c}
 
-    def on_validation_epoch_end(self, outputs: List[Dict[str, Tensor]]) -> None:
+    def validation_epoch_end(self, outputs: List[Dict[str, Tensor]]) -> None:
         """Log predicted and ground truth images"""
         if self.wandb_logger:
             columns = ["ground_truth", "predicted"]
             data = []
             # TODO: Fix this to be dataset agnostic
-            w = np.floor(self.val_dataset.w * self.args.scale)
-            h = np.floor(self.val_dataset.h * self.args.scale)
+            w = int(np.floor(self.val_dataset.w))
+            h = int(np.floor(self.val_dataset.h))
             for output in outputs:
-                gt = output["gt"].reshape(h, w, 3).cpu().numpy()
-                pred = output["pred"].reshape(h, w, 3).cpu().numpy()
+                gt = output["gt"].reshape(h, w, 3).cpu().numpy()*255
+                pred = output["pred"].reshape(h, w, 3).cpu().numpy()*255
                 data.append([wandb.Image(gt), wandb.Image(pred)])
 
             self.wandb_logger.log_table(key="results", columns=columns, data=data)

@@ -37,7 +37,7 @@ class NeRFModel(nn.Module):
             nn.Linear(in_features=256, out_features=1), nn.ReLU()
         )
         self.output_color = nn.Sequential(
-            nn.Linear(in_features=256, out_features=3), nn.Sigmoid()
+            nn.Linear(in_features=128, out_features=3), nn.Sigmoid()
         )
 
     def forward(self, x: Tensor, d: Tensor) -> Tuple[Tensor, Tensor]:
