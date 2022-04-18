@@ -8,39 +8,32 @@ def positional_encoding(vec: Tensor, L: int) -> Tensor:
     """Postionally encode a batch of numbers
 
     Inputs -
-        vec [B]: Batch of features to perform positional encoding on
+        vec [B * 3]: Batch of features to perform positional encoding on
         L: Number of terms to use in positional encoding
     Outputs -
-        res [B * 2L]: Encoded features
+        res [B * 6L]: Encoded features
     """
-    powers = torch.pow(2, torch.arange(L))
-    x = torch.pi * torch.unsqueeze(vec, dim=1) * powers
-
+    B, _ = vec.shape
+    powers = torch.pow(2, torch.arange(L, device=vec.device))  # L
+    x = torch.pi * torch.unsqueeze(vec, dim=-1) * powers  # B * 3 * L
+    x = x.reshape(B, -1)  # B * 3L
     return torch.concat((torch.sin(x), torch.cos(x)), dim=1)
 
 
-def get_rays(mat: Tensor, f: float, h: int, w: int) -> Tuple[Tensor, Tensor]:
+def get_rays(mat: Tensor, dirs: Tensor) -> Tuple[Tensor, Tensor]:
     """Returns 'o' and 'd' for all pixels in an image
 
     Inputs -
-        mat: World matrix of camera
-        f: Focal length of camera
-        h, w: Dimensions of image
+        mat [4 * 4]: World matrix of camera
+        dirs [h * w * 3]: Directions for each pixel in camera coordinates
     Outputs -
         o [h * w * 3]: Origin of all the rays in the image
         d [h * w * 3]: Direction of all the rays in the image
-
-    Note -
-        Taken from original NeRF implementation
-        https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L123
     """
-    y, x = torch.meshgrid(torch.arange(h), torch.arange(w), indexing="xy")
-    d = torch.dstack([(x - w / 2) / f, (y - h / 2) / f, -torch.ones_like(y)])
-    d = (d.unsqueeze(2) * mat[:3, :3]).sum(dim=-1)
+    h, w = dirs.shape[:2]
+    d = dirs @ mat[:3, :3].T
+    d = d / torch.norm(d, dim=-1, keepdim=True)
     o = torch.broadcast_to(mat[:3, 3], (w, h, 3))
-    # Swap w,h axis
-    o = torch.transpose(o, 0, 1)
-    d = torch.transpose(d, 0, 1)
     return o, d
 
 
@@ -67,25 +60,18 @@ def render(
     B, n = t.shape
     pos = torch.broadcast_to(o, (n, B, 3)).transpose(0, 1)
     pos = pos + t[..., None] * d[:, None, :]  # B * n * 3
+    dir = d[:, None, :].repeat(1, n, 1)
 
     # Perform positional encoding on position and direction vectors
-    encoded_pos = torch.zeros(B, n, Lx * 6)
-    encoded_dir = torch.zeros(B, Ld * 6)
-    for i in range(3):
-        encoded_pos[:, :, i * 2 * Lx : (i + 1) * 2 * Lx] = positional_encoding(
-            pos[:, :, i].flatten(), Lx
-        ).reshape(B, n, -1)
-        encoded_dir[:, i * 2 * Ld : (i + 1) * 2 * Ld] = positional_encoding(
-            d[:, i].flatten(), Ld
-        ).reshape(B, -1)
-    encoded_dir = encoded_dir[:, None, :].repeat(1, n, 1)
+    encoded_pos = positional_encoding(pos.reshape(-1, 3), Lx).float()
+    encoded_dir = positional_encoding(dir.reshape(-1, 3), Ld).float()
 
     # Get color with coarse sampling
     sigma, color = model_coarse(
         encoded_pos.reshape(-1, Lx * 6), encoded_dir.reshape(-1, Ld * 6)
     )
     sigma = sigma.reshape(B, n)
-    color = color.reshape(B, n)
+    color = color.reshape(B, n, 3)
 
     # Apply rendering equation
     delta = t[:, 1:] - t[:, :-1]
@@ -93,7 +79,7 @@ def render(
 
     # Multiply each distance by the norm of its corresponding direction ray
     # to convert to real world distance (accounts for non-unit directions).
-    delta = delta * torch.norm(dir.unsqueeze(1), dim=-1)
+    delta = delta * torch.norm(d.unsqueeze(1), dim=-1)
 
     sig_del = sigma * delta
     alpha = 1 - torch.exp(-sig_del)
@@ -101,11 +87,11 @@ def render(
     t = torch.cat((torch.ones_like(alpha[:, :1]), t[:, :-1]), dim=-1)
 
     w = alpha * t
-    c = w.unsqueeze(-1) * color
+    c = torch.sum(w.unsqueeze(-1) * color, -2)
 
     # If background is white set color to 1 where alpha is 0
     if white_bck:
-        c = c + 1 - w.sum(1)
+        c = c + (1 - w.sum(1).unsqueeze(-1))
 
     return c, w
     # TODO: Do fine sampling
@@ -121,10 +107,10 @@ def sample_coarse(B: int, n: int, near: Tensor, far: Tensor) -> Tensor:
     Ouptut -
         samples [B * n]: The sampled points
     """
-    samples = torch.linspace(0, 1, n+1)
-    samples = samples.expand(B, n+1)
-    disp = torch.rand_like(samples) / (n+1)
-    samples = (samples + disp)[...,:-1]
+    samples = torch.linspace(0, 1, n + 1, device=near.device)
+    samples = samples.expand(B, n + 1)
+    disp = torch.rand_like(samples) / n
+    samples = (samples + disp)[..., :-1]
     samples = near.unsqueeze(-1) * (1 - samples) + far.unsqueeze(-1) * samples
     return samples
 

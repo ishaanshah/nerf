@@ -47,6 +47,12 @@ class NeRFBlenderDataSet(Dataset):
         self.near = 2.0
         self.far = 6.0
 
+        # Directions are same in camera coordinates for all
+        x, y = torch.meshgrid(torch.arange(self.w), torch.arange(self.h), indexing="xy")
+        self.dirs = torch.dstack(
+            [(x - self.w / 2) / self.f, -(y - self.h / 2) / self.f, -torch.ones_like(y)]
+        )
+
         # Only sample random rays in train mode
         if self.mode == "train":
             origins = []
@@ -65,7 +71,7 @@ class NeRFBlenderDataSet(Dataset):
     def gen_from_frame(self, frame: dict) -> Tuple[Tensor, Tensor, Tensor]:
         # Generate rays
         mat = torch.Tensor(frame["transform_matrix"])
-        o, d = get_rays(mat, self.f, self.h, self.w)
+        o, d = get_rays(mat, self.dirs)
         o = o.reshape(-1, 3)
         d = d.reshape(-1, 3)
 

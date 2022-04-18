@@ -17,6 +17,8 @@ def main(args):
     trainer = Trainer.from_argparse_args(
         args,
         logger=logger,
+        log_every_n_steps=10,
+        # profiler='simple',
     )
 
     # Create the model

@@ -1,6 +1,7 @@
 import torchmetrics as metrics
 import wandb
 import numpy as np
+import torch
 from torch.utils.data import DataLoader
 from pytorch_lightning.loggers import WandbLogger
 from argparse import ArgumentParser, Namespace
@@ -39,6 +40,12 @@ class NeRFModule(LightningModule):
             type=int,
             default=192,
             help="number of fine samples excluding coarse samples",
+        )
+        parser.add_argument(
+            "--chunk_size",
+            type=int,
+            default=32 * 1024,
+            help="number rays to process at a time",
         )
         return parent_parser
 
@@ -85,25 +92,35 @@ class NeRFModule(LightningModule):
         o, d, _, near, far = batch
         B = o.shape[0]
 
-        # Get coarse color
-        t_coarse = utils.sample_coarse(B, self.args.sample_coarse, near, far)
+        chunk = self.args.chunk_size
+        results = []
+        for i in range(0, B, chunk):
+            # Get coarse color
+            t_coarse = utils.sample_coarse(
+                len(o[i : i + chunk]), self.args.sample_coarse, near, far
+            )
 
-        # TODO: Get fine color
-        return utils.render(
-            o,
-            d,
-            t_coarse,
-            self.model_coarse,
-            self.model_fine,
-            self.args.lx,
-            self.args.ld,
-            self.train_dataset.white_bck,
-        )
+            # TODO: Get fine color
+            results += [
+                utils.render(
+                    o[i : i + chunk],
+                    d[i : i + chunk],
+                    t_coarse,
+                    self.model_coarse,
+                    self.model_fine,
+                    self.args.lx,
+                    self.args.ld,
+                    self.train_dataset.white_bck,
+                )[0]
+            ]
+
+        return torch.cat(results, dim=0)
 
     def training_step(self, batch, _) -> Tensor:
         _, _, c, _, _ = batch
 
-        cp, w = self(batch)
+        # TODO: Fix this
+        cp = self(batch)
         c_loss = self.criterion(cp, c)
 
         # Logging
@@ -121,7 +138,8 @@ class NeRFModule(LightningModule):
         nbatch = [i.squeeze(0) for i in batch]
         _, _, c, _, _ = nbatch
 
-        cp, w = self(nbatch)
+        # TODO: Fix this
+        cp = self(nbatch)
         c_loss = self.criterion(cp, c)
 
         # Logging
@@ -136,15 +154,14 @@ class NeRFModule(LightningModule):
     def validation_epoch_end(self, outputs: List[Dict[str, Tensor]]) -> None:
         """Log predicted and ground truth images"""
         if self.wandb_logger:
-            columns = ["ground_truth", "predicted"]
+            columns = ["idx", "ground_truth", "predicted"]
             data = []
-            # TODO: Fix this to be dataset agnostic
             w = int(np.floor(self.val_dataset.w))
             h = int(np.floor(self.val_dataset.h))
-            for output in outputs:
-                gt = output["gt"].reshape(h, w, 3).cpu().numpy()*255
-                pred = output["pred"].reshape(h, w, 3).cpu().numpy()*255
-                data.append([wandb.Image(gt), wandb.Image(pred)])
+            for i in range(0, len(outputs), 20):
+                output = outputs[i]
+                gt = output["gt"].reshape(h, w, 3).cpu().numpy() * 255
+                pred = output["pred"].reshape(h, w, 3).cpu().numpy() * 255
 
             self.wandb_logger.log_table(key="results", columns=columns, data=data)
 

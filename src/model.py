@@ -14,7 +14,7 @@ class NeRFModel(nn.Module):
         super(NeRFModel, self).__init__()
 
         pre_skip = [nn.Linear(position_dim, 256), nn.ReLU()]
-        for _ in range(4):
+        for _ in range(3):
             pre_skip.append(nn.Linear(256, 256))
             pre_skip.append(nn.ReLU())
         self.pre_skip = nn.Sequential(*pre_skip)
@@ -22,16 +22,13 @@ class NeRFModel(nn.Module):
         self.skip = nn.Sequential(nn.Linear(256 + position_dim, 256), nn.ReLU())
 
         post_skip = []
-        for _ in range(4):
+        for _ in range(3):
             post_skip.append(nn.Linear(256, 256))
             post_skip.append(nn.ReLU())
         self.post_skip = nn.Sequential(*post_skip)
 
-        post_depth = [nn.Linear(256 + direction_dim, 128), nn.ReLU()]
-        for _ in range(4):
-            post_depth.append(nn.Linear(128, 128))
-            post_depth.append(nn.ReLU())
-        self.post_depth = nn.Sequential(*post_depth)
+        self.post_depth = nn.Linear(256, 256)
+        self.post_dir = nn.Sequential(nn.Linear(256 + direction_dim, 128), nn.ReLU())
 
         self.output_depth = nn.Sequential(
             nn.Linear(in_features=256, out_features=1), nn.ReLU()
@@ -55,8 +52,9 @@ class NeRFModel(nn.Module):
         x = self.post_skip(x)
 
         sigma = self.output_depth(x)
-        x = torch.cat((d, x), dim=1)
         x = self.post_depth(x)
+        x = torch.cat((d, x), dim=1)
+        x = self.post_dir(x)
 
         color = self.output_color(x)
 
