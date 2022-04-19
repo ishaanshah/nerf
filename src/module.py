@@ -107,9 +107,9 @@ class NeRFModule(LightningModule):
                     d[i : i + chunk],
                     t_coarse,
                     self.model_coarse,
-                    self.model_fine,
                     self.args.lx,
                     self.args.ld,
+                    chunk,
                     self.train_dataset.white_bck,
                 )[0]
             ]
@@ -154,16 +154,17 @@ class NeRFModule(LightningModule):
     def validation_epoch_end(self, outputs: List[Dict[str, Tensor]]) -> None:
         """Log predicted and ground truth images"""
         if self.wandb_logger:
-            columns = ["idx", "ground_truth", "predicted"]
+            columns = ["id", "ground_truth", "predicted"]
             data = []
             w = int(np.floor(self.val_dataset.w))
             h = int(np.floor(self.val_dataset.h))
-            for i in range(0, len(outputs), 20):
+            for i in range(0, min(5, len(outputs))):
                 output = outputs[i]
                 gt = output["gt"].reshape(h, w, 3).cpu().numpy() * 255
                 pred = output["pred"].reshape(h, w, 3).cpu().numpy() * 255
+                data.append([i, wandb.Image(gt), wandb.Image(pred)])
 
-            self.wandb_logger.log_table(key="results", columns=columns, data=data)
+            self.wandb_logger.log_table(key="rgb", columns=columns, data=data)
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

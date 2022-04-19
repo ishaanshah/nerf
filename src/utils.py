@@ -41,10 +41,10 @@ def render(
     o: Tensor,
     d: Tensor,
     t: Tensor,
-    model_coarse: NeRFModel,
-    model_fine: NeRFModel,
+    model: NeRFModel,
     Lx: int,
     Ld: int,
+    chunk_size: int,
     white_bck: bool,
 ) -> Tuple[Tensor, Tensor]:
     """Render color along a ray
@@ -55,6 +55,7 @@ def render(
         t [B * n]: Points to sample on the ray
         model_coarse/fine: Coarse and fine NeRF models
         Lx/Ld: Number of components to use for positional encoding
+        chunk_size: Number of points to process at a time
         white_bck: Whether the image has white background
     """
     B, n = t.shape
@@ -63,13 +64,21 @@ def render(
     dir = d[:, None, :].repeat(1, n, 1)
 
     # Perform positional encoding on position and direction vectors
-    encoded_pos = positional_encoding(pos.reshape(-1, 3), Lx).float()
-    encoded_dir = positional_encoding(dir.reshape(-1, 3), Ld).float()
+    pos = pos.reshape(-1, 3).float()
+    dir = dir.reshape(-1, 3).float()
 
-    # Get color with coarse sampling
-    sigma, color = model_coarse(
-        encoded_pos.reshape(-1, Lx * 6), encoded_dir.reshape(-1, Ld * 6)
-    )
+    sigma = torch.zeros(B * n, dtype=torch.float32, device=o.device)
+    color = torch.zeros((B * n, 3), dtype=torch.float32, device=o.device)
+    for i in range(0, B * n, chunk_size):
+        encoded_pos = positional_encoding(pos[i : i + chunk_size], Lx).float()
+        encoded_dir = positional_encoding(dir[i : i + chunk_size], Ld).float()
+        # Get color with coarse sampling
+        sigma_, color_ = model(
+            encoded_pos.reshape(-1, Lx * 6), encoded_dir.reshape(-1, Ld * 6)
+        )
+        sigma[i : i + chunk_size] = sigma_.reshape(chunk_size)
+        color[i : i + chunk_size] = color_.reshape(chunk_size, 3)
+
     sigma = sigma.reshape(B, n)
     color = color.reshape(B, n, 3)
 

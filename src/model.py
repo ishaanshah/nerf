@@ -30,8 +30,12 @@ class NeRFModel(nn.Module):
         self.post_depth = nn.Linear(256, 256)
         self.post_dir = nn.Sequential(nn.Linear(256 + direction_dim, 128), nn.ReLU())
 
+        # The original paper suggests ReLU however it has been observed
+        # that Softplus makes the training more stable and reliable
+        # for blender dataset which consists a lot of white background
+        # Refer: https://github.com/bmild/nerf/issues/29
         self.output_depth = nn.Sequential(
-            nn.Linear(in_features=256, out_features=1), nn.ReLU()
+            nn.Linear(in_features=256, out_features=1), nn.Softplus()
         )
         self.output_color = nn.Sequential(
             nn.Linear(in_features=128, out_features=3), nn.Sigmoid()

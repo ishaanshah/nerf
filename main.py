@@ -17,7 +17,6 @@ def main(args):
     trainer = Trainer.from_argparse_args(
         args,
         logger=logger,
-        log_every_n_steps=10,
         # profiler='simple',
     )
 
@@ -39,6 +38,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--scale", type=float, default=1.0, help="scaling factor for images"
     )
+    # TODO: Check if we need this
+    # parser.add_argument(
+    #     "--crop", type=float, default=[1.0, 1.0], help="crop factor for images (center crop)"
+    # )
 
     # Model specific arguments
     parser = NeRFModule.add_model_specific_args(parser)
