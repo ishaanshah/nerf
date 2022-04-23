@@ -14,8 +14,8 @@ def positional_encoding(vec: Tensor, L: int) -> Tensor:
         res [B * 6L]: Encoded features
     """
     B, _ = vec.shape
-    powers = torch.pow(2, torch.arange(L, device=vec.device))  # L
-    x = torch.pi * torch.unsqueeze(vec, dim=-1) * powers  # B * 3 * L
+    powers = torch.pow(2, torch.arange(L, device=vec.device)) # L
+    x = torch.unsqueeze(vec, dim=-1) * powers  # B * 3 * L
     x = x.reshape(B, -1)  # B * 3L
     return torch.concat((torch.sin(x), torch.cos(x)), dim=1)
 
@@ -33,7 +33,7 @@ def get_rays(mat: Tensor, dirs: Tensor) -> Tuple[Tensor, Tensor]:
     h, w = dirs.shape[:2]
     d = dirs @ mat[:3, :3].T
     d = d / torch.norm(d, dim=-1, keepdim=True)
-    o = torch.broadcast_to(mat[:3, 3], (w, h, 3))
+    o = torch.broadcast_to(mat[:3, 3], (h, w, 3))
     return o, d
 
 
@@ -59,7 +59,7 @@ def render(
         white_bck: Whether the image has white background
     """
     B, n = t.shape
-    pos = torch.broadcast_to(o, (n, B, 3)).transpose(0, 1)
+    pos = o[:,None,:].repeat(1, n, 1)
     pos = pos + t[..., None] * d[:, None, :]  # B * n * 3
     dir = d[:, None, :].repeat(1, n, 1)
 
@@ -74,7 +74,7 @@ def render(
         encoded_dir = positional_encoding(dir[i : i + chunk_size], Ld).float()
         # Get color with coarse sampling
         sigma_, color_ = model(
-            encoded_pos.reshape(-1, Lx * 6), encoded_dir.reshape(-1, Ld * 6)
+            encoded_pos, encoded_dir
         )
         sigma[i : i + chunk_size] = sigma_.reshape(chunk_size)
         color[i : i + chunk_size] = color_.reshape(chunk_size, 3)
@@ -92,18 +92,17 @@ def render(
 
     sig_del = sigma * delta
     alpha = 1 - torch.exp(-sig_del)
-    t = torch.cumprod(1 - alpha + 1e-10, dim=-1)
-    t = torch.cat((torch.ones_like(alpha[:, :1]), t[:, :-1]), dim=-1)
+    t = torch.cat((torch.ones_like(alpha[:, :1]), 1 - alpha + 1e-10), dim=-1)
+    t = torch.cumprod(t, dim=-1)[:,:-1]
 
-    w = alpha * t
-    c = torch.sum(w.unsqueeze(-1) * color, -2)
+    w = alpha * t # B * n
+    c = torch.sum(w.unsqueeze(-1) * color, 1)
 
     # If background is white set color to 1 where alpha is 0
     if white_bck:
         c = c + (1 - w.sum(1).unsqueeze(-1))
 
     return c, w
-    # TODO: Do fine sampling
 
 
 def sample_coarse(B: int, n: int, near: Tensor, far: Tensor) -> Tensor:
@@ -146,11 +145,11 @@ def sample_fine(nf: int, coarse: Tensor, weights: Tensor) -> Tensor:
     cdf = torch.cumsum(weights, dim=-1)
 
     # Normalize to sum up to 1
-    cdf = cdf / cdf[:, -1]
+    cdf = cdf / cdf[:, -1:]
     cdf = torch.cat([torch.zeros_like(cdf[:, :1]), cdf], dim=-1)
 
     # Sample uniformly
-    u = torch.rand(coarse.shape[0], nf)
+    u = torch.rand(coarse.shape[0], nf, device=coarse.device)
     u.contiguous()
 
     # Find idx where 'u' lies between two values of cdf

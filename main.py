@@ -38,10 +38,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--scale", type=float, default=1.0, help="scaling factor for images"
     )
-    # TODO: Check if we need this
-    # parser.add_argument(
-    #     "--crop", type=float, default=[1.0, 1.0], help="crop factor for images (center crop)"
-    # )
 
     # Model specific arguments
     parser = NeRFModule.add_model_specific_args(parser)

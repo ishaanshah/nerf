@@ -31,7 +31,7 @@ class NeRFBlenderDataSet(Dataset):
         self.data_dir = data_dir
         self.valid_count = valid_count
         self.test_count = test_count
-        self.white_bck = True
+        self.white_bck = False
 
         with open(data_dir / f"transforms_{mode}.json") as f:
             self.frames = json.load(f)
@@ -60,8 +60,8 @@ class NeRFBlenderDataSet(Dataset):
             rgbs = []
             for frame in self.frames["frames"]:
                 o, d, img = self.gen_from_frame(frame)
-                origins.append(o.reshape(-1, 3))
-                directions.append(d.reshape(-1, 3))
+                origins.append(o)
+                directions.append(d)
                 rgbs.append(img)
 
             self.origins = torch.cat(origins, 0)
@@ -79,7 +79,7 @@ class NeRFBlenderDataSet(Dataset):
         img = Image.open(
             os.path.join(self.data_dir, f"{frame['file_path']}.png")
         ).convert("RGBA")
-        bkg = Image.new("RGBA", img.size, (255, 255, 255))
+        bkg = Image.new("RGBA", img.size, (0, 0, 0))
         img = Image.alpha_composite(bkg, img).convert("RGB")
         img = img.resize((self.w, self.h))
         img = F.to_tensor(img).double()

@@ -31,7 +31,7 @@ class NeRFModule(LightningModule):
             default=4,
             help="number of components to use for encoding direction",
         )
-        parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
+        parser.add_argument("--lr", type=float, default=5e-4, help="learning rate")
         parser.add_argument(
             "--sample_coarse", type=int, default=64, help="number of coarse samples"
         )
@@ -93,63 +93,91 @@ class NeRFModule(LightningModule):
         B = o.shape[0]
 
         chunk = self.args.chunk_size
-        results = []
+        colors_c, colors_f = [], []
         for i in range(0, B, chunk):
-            # Get coarse color
+            # Coarse sampling
             t_coarse = utils.sample_coarse(
                 len(o[i : i + chunk]), self.args.sample_coarse, near, far
             )
 
-            # TODO: Get fine color
-            results += [
-                utils.render(
+            c_c, w_c = utils.render(
                     o[i : i + chunk],
                     d[i : i + chunk],
                     t_coarse,
                     self.model_coarse,
                     self.args.lx,
                     self.args.ld,
-                    chunk,
+                    len(o[i : i + chunk]),
                     self.train_dataset.white_bck,
-                )[0]
-            ]
+                )
 
-        return torch.cat(results, dim=0)
+            colors_c += [c_c]
+
+            # Fine sampling
+            t_bins = (t_coarse[:,:-1] + t_coarse[:,1:]) / 2
+            t_fine = utils.sample_fine(self.args.sample_fine, t_bins, w_c[:,1:-1]).detach()
+            t_fine = torch.cat((t_fine, t_coarse), dim=1)
+            t_fine = torch.sort(t_fine, dim=1)[0]
+            c_f, _ = utils.render(
+                    o[i : i + chunk],
+                    d[i : i + chunk],
+                    t_fine,
+                    self.model_fine,
+                    self.args.lx,
+                    self.args.ld,
+                    len(o[i : i + chunk]),
+                    self.train_dataset.white_bck,
+                )
+            colors_f += [c_f]
+
+
+        colors_coarse = torch.cat(colors_c, dim=0) # B * 3
+        colors_fine = torch.cat(colors_f, dim=0) # B * 3
+
+        return colors_coarse, colors_fine
 
     def training_step(self, batch, _) -> Tensor:
         _, _, c, _, _ = batch
 
-        # TODO: Fix this
-        cp = self(batch)
-        c_loss = self.criterion(cp, c)
+        cc_p, cf_p = self(batch)
+        c_loss = self.criterion(cc_p, c)
+        f_loss = self.criterion(cf_p, c)
+        loss = c_loss+f_loss
 
         # Logging
         # TODO: Fix SSIM
-        psnr = self.psnr(cp, c)
+        with torch.no_grad():
+            psnr = self.psnr(cf_p, c)
         # ssim = self.ssim(cp, c)
-        self.log("train/c_loss", c_loss)
-        self.log("train/loss", c_loss)
+        self.log("train/c_loss", c_loss, prog_bar=True)
+        self.log("train/f_loss", f_loss, prog_bar=True)
+        self.log("train/loss", loss)
         self.log("train/psnr", psnr, prog_bar=True)
         # self.log("train/ssim", ssim)
 
-        return c_loss
+        return loss
 
     def validation_step(self, batch, _) -> dict:
         nbatch = [i.squeeze(0) for i in batch]
         _, _, c, _, _ = nbatch
 
-        # TODO: Fix this
-        cp = self(nbatch)
-        c_loss = self.criterion(cp, c)
+        cc_p, cf_p = self(nbatch)
+        c_loss = self.criterion(cc_p, c)
+        f_loss = self.criterion(cf_p, c)
+        loss = c_loss+f_loss
 
         # Logging
-        psnr = self.psnr(cp, c)
+        # TODO: Fix SSIM
+        with torch.no_grad():
+            psnr = self.psnr(cf_p, c)
         # ssim = self.ssim(cp, c)
         self.log("val/c_loss", c_loss)
-        self.log("val/loss", c_loss)
+        self.log("val/f_loss", f_loss)
+        self.log("val/loss", loss)
         self.log("val/psnr", psnr)
         # self.log("val/ssim", ssim)
-        return {"pred": cp, "gt": c}
+
+        return {"pred_fine": cf_p, "pred_coarse": cc_p, "gt": c}
 
     def validation_epoch_end(self, outputs: List[Dict[str, Tensor]]) -> None:
         """Log predicted and ground truth images"""
@@ -161,7 +189,7 @@ class NeRFModule(LightningModule):
             for i in range(0, min(5, len(outputs))):
                 output = outputs[i]
                 gt = output["gt"].reshape(h, w, 3).cpu().numpy() * 255
-                pred = output["pred"].reshape(h, w, 3).cpu().numpy() * 255
+                pred = output["pred_fine"].reshape(h, w, 3).cpu().numpy() * 255
                 data.append([i, wandb.Image(gt), wandb.Image(pred)])
 
             self.wandb_logger.log_table(key="rgb", columns=columns, data=data)
@@ -197,7 +225,7 @@ class NeRFModule(LightningModule):
 
     def configure_optimizers(self):
         optimizer = optim.Adam(
-            params=self.model_coarse.parameters(), lr=self.args.lr, eps=1e-7
+            params=list(self.model_coarse.parameters()) + list(self.model_fine.parameters()), lr=self.args.lr, eps=1e-7
         )
         # TODO: Configure scheduler
         # decay_rate = 0.1
