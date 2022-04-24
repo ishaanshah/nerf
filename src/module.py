@@ -81,8 +81,12 @@ class NeRFModule(LightningModule):
         self.save_hyperparameters()
 
         # Models
-        self.model_coarse = NeRFModel(args.lx * 6, args.ld * 6)
-        self.model_fine = NeRFModel(args.lx * 6, args.ld * 6)
+        if self.args.mesh == "":
+            self.model_coarse = NeRFModel(args.lx * 6, args.ld * 6)
+            self.model_fine = NeRFModel(args.lx * 6, args.ld * 6)
+        else:
+            self.model_coarse = NeRFModel(args.lx * 7, args.ld * 7)
+            self.model_fine = NeRFModel(args.lx * 7, args.ld * 7)
 
         # Loss
         self.criterion = nn.MSELoss(reduction="mean")
@@ -161,10 +165,13 @@ class NeRFModule(LightningModule):
                 len(o[i : i + chunk]), self.args.sample_coarse, near, far
             )
 
+            #TODO pass SDF instead of None
+
             c_c, w_c = utils.render(
                     o[i : i + chunk],
                     d[i : i + chunk],
                     t_coarse,
+                    None,
                     self.model_coarse,
                     self.args.lx,
                     self.args.ld,
@@ -182,6 +189,7 @@ class NeRFModule(LightningModule):
                     o[i : i + chunk],
                     d[i : i + chunk],
                     t_fine,
+                    None,
                     self.model_fine,
                     self.args.lx,
                     self.args.ld,
