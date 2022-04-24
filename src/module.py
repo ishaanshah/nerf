@@ -98,7 +98,7 @@ class NeRFModule(LightningModule):
         # Create datasets
         data_dir = Path(args.data_dir)
         train_dataset = NeRFBlenderDataSet(
-            mode="train", data_dir=data_dir, scale=self.args.scale
+            mode="train", data_dir=data_dir, scale=self.args.scale, img_list=args.images
         )
         val_dataset = NeRFBlenderDataSet(
             mode="val", data_dir=data_dir, scale=self.args.scale, valid_count=args.valid_count
