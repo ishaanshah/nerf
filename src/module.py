@@ -47,6 +47,13 @@ class NeRFModule(LightningModule):
             default=32 * 1024,
             help="number rays to process at a time",
         )
+        parser.add_argument(
+            "--optimizer",
+            type=str,
+            default='adam',
+            choices=['adam', 'radam'],
+            help="which optimizer to use",
+        )
         return parent_parser
 
     def __init__(
@@ -74,7 +81,7 @@ class NeRFModule(LightningModule):
             mode="train", data_dir=data_dir, scale=self.args.scale
         )
         self.val_dataset = NeRFBlenderDataSet(
-            mode="val", data_dir=data_dir, scale=self.args.scale
+            mode="val", data_dir=data_dir, scale=self.args.scale, valid_count=args.valid_count
         )
 
     def forward(self, batch) -> Tuple[Tensor, Tensor]:
@@ -171,10 +178,10 @@ class NeRFModule(LightningModule):
         with torch.no_grad():
             psnr = self.psnr(cf_p, c)
         # ssim = self.ssim(cp, c)
-        self.log("val/c_loss", c_loss)
-        self.log("val/f_loss", f_loss)
-        self.log("val/loss", loss)
-        self.log("val/psnr", psnr)
+        self.log("val/c_loss", c_loss, sync_dist=True)
+        self.log("val/f_loss", f_loss, sync_dist=True)
+        self.log("val/loss", loss, sync_dist=True)
+        self.log("val/psnr", psnr, sync_dist=True)
         # self.log("val/ssim", ssim)
 
         return {"pred_fine": cf_p, "pred_coarse": cc_p, "gt": c}
@@ -224,9 +231,14 @@ class NeRFModule(LightningModule):
     """
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(
-            params=list(self.model_coarse.parameters()) + list(self.model_fine.parameters()), lr=self.args.lr, eps=1e-7
-        )
+        if self.args.optimizer == 'adam':
+            optimizer = optim.Adam(
+                params=list(self.model_coarse.parameters()) + list(self.model_fine.parameters()), lr=self.args.lr, eps=1e-7
+            )
+        else:
+            optimizer = optim.RAdam(
+                params=list(self.model_coarse.parameters()) + list(self.model_fine.parameters()), lr=self.args.lr, eps=1e-7
+            )
         # TODO: Configure scheduler
         # decay_rate = 0.1
         # lrate_decay = self.args.lr_decay

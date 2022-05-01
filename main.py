@@ -17,7 +17,6 @@ def main(args):
     trainer = Trainer.from_argparse_args(
         args,
         logger=logger,
-        # profiler='simple',
     )
 
     # Create the model
@@ -37,6 +36,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--scale", type=float, default=1.0, help="scaling factor for images"
+    )
+    parser.add_argument(
+        "--valid_count", type=int, default=-1, help="how many images to use for validation (-1 for all)"
     )
 
     # Model specific arguments

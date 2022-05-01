@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -A research
-#SBATCH -n 10
-#SBATCH --gres=gpu:1
+#SBATCH -n 30
+#SBATCH --gres=gpu:3
 #SBATCH --mem-per-cpu=2G
 #SBATCH --time=4-00:00:00
 #SBATCH --job-name=train_nerf
@@ -23,7 +23,13 @@ source /home2/ishaanshah/anaconda3/bin/activate SemGCN
 pushd ~/nerf
 wandb on
 
+# Get count of GPUS
+IFS=', ' read -r -a GPUS <<< "$SLURM_JOB_GPUS"
+GPU_COUNT=${#GPUS[@]}
+params=(--gpus="$GPU_COUNT")
+[ "$GPU_COUNT" -gt 1 ] && params+=(--strategy='ddp')
+
 args=("$@")
-python main.py /ssd_scratch/cvit/ishaanshah/nerf_dataset/nerf_synthetic/$1 --gpus=1 --chunk_size 16384 "${args[@]:1}"
+python main.py /ssd_scratch/cvit/ishaanshah/nerf_dataset/nerf_synthetic/$1 "${params[@]}" "${args[@]:1}"
 
 popd

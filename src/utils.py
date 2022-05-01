@@ -12,6 +12,10 @@ def positional_encoding(vec: Tensor, L: int) -> Tensor:
         L: Number of terms to use in positional encoding
     Outputs -
         res [B * 6L]: Encoded features
+
+    Note -
+        This is different than the original implementation.
+        Refer to https://github.com/bmild/nerf/issues/12
     """
     B, _ = vec.shape
     powers = torch.pow(2, torch.arange(L, device=vec.device)) # L
@@ -57,6 +61,9 @@ def render(
         Lx/Ld: Number of components to use for positional encoding
         chunk_size: Number of points to process at a time
         white_bck: Whether the image has white background
+    Outputs -
+        c [B * 3]: Color of ray
+        w [B * n]: Weights of points sampled along the ray
     """
     B, n = t.shape
     pos = o[:,None,:].repeat(1, n, 1)
@@ -135,7 +142,6 @@ def sample_fine(nf: int, coarse: Tensor, weights: Tensor) -> Tensor:
     Note -
         Taken from original NeRF implementation
         https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L183
-
     """
     # TODO: Check if function has to be differentiable, if not use Categorical
     # Prevent NaN
