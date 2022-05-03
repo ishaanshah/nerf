@@ -1,0 +1,3 @@
+[submodule "lib/mesh_to_sdf"]
+	path = lib/mesh_to_sdf
+	url = git@github.com:ishaanshah/mesh_to_sdf.git
