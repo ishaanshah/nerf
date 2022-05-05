@@ -2,6 +2,10 @@ import torchmetrics as metrics
 import wandb
 import numpy as np
 import torch
+import trimesh
+# TODO: Install this instead of importing
+from ..lib.mesh_to_sdf.mesh_to_sdf import mesh_to_voxels
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 from pytorch_lightning.loggers import WandbLogger
 from argparse import ArgumentParser, Namespace
@@ -54,6 +58,18 @@ class NeRFModule(LightningModule):
             choices=['adam', 'radam'],
             help="which optimizer to use",
         )
+        parser.add_argument(
+            "--mesh",
+            type=str,
+            default='',
+            help="mesh to calculate SDF for",
+        )
+        parser.add_argument(
+            "--voxel_size",
+            type=int,
+            default=128,
+            help='Size of voxel gride to calculate SDF for (only used if --mesh is provide)'
+        )
         return parent_parser
 
     def __init__(
@@ -77,12 +93,50 @@ class NeRFModule(LightningModule):
 
         # Create datasets
         data_dir = Path(args.data_dir)
-        self.train_dataset = NeRFBlenderDataSet(
+        train_dataset = NeRFBlenderDataSet(
             mode="train", data_dir=data_dir, scale=self.args.scale
         )
-        self.val_dataset = NeRFBlenderDataSet(
+        val_dataset = NeRFBlenderDataSet(
             mode="val", data_dir=data_dir, scale=self.args.scale, valid_count=args.valid_count
         )
+        self.train_loader = DataLoader(
+            train_dataset,
+            batch_size=self.args.batch_size,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+        )
+        self.val_loader = DataLoader(
+            val_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+        )
+
+        if args.mesh:
+            # Calculate scene bounds
+            print("Calculating scene bounds...")
+            mins = 9e15 * torch.ones(3)
+            maxs = -9e15 * torch.ones(3)
+            # TODO: Just go over corners of frustum instead of all pixels
+            for loader in [self.train_loader, self.val_loader]:
+                for batch in tqdm(loader):
+                    o, d, _, near, far = batch
+                    if loader == self.val_loader:
+                        o = o.squeeze()
+                        d = d.squeeze()
+                    batch_bounds = torch.cat((o + near.unsqueeze(-1)*d, o + far.unsqueeze(-1)*d), dim=0)
+                    mins = torch.min(mins, torch.min(batch_bounds, dim=0)[0])
+                    maxs = torch.min(maxs, torch.max(batch_bounds, dim=0)[0])
+
+            # Get dimension along which bound is highest
+            idx = torch.max(maxs-mins)[0]
+            self.bounds = (mins[idx], maxs[idx])
+
+            # Calculate SDF voxel grid
+            # mesh = trimesh.load_from_mesh:
+            # mesh_to_voxels(
 
     def forward(self, batch) -> Tuple[Tensor, Tensor]:
         """
@@ -115,7 +169,6 @@ class NeRFModule(LightningModule):
                     self.args.lx,
                     self.args.ld,
                     len(o[i : i + chunk]),
-                    self.train_dataset.white_bck,
                 )
 
             colors_c += [c_c]
@@ -133,7 +186,6 @@ class NeRFModule(LightningModule):
                     self.args.lx,
                     self.args.ld,
                     len(o[i : i + chunk]),
-                    self.train_dataset.white_bck,
                 )
             colors_f += [c_f]
 
@@ -202,22 +254,10 @@ class NeRFModule(LightningModule):
             self.wandb_logger.log_table(key="rgb", columns=columns, data=data)
 
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.args.batch_size,
-            shuffle=True,
-            num_workers=4,
-            pin_memory=True,
-        )
+        return self.train_loader
 
     def val_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=1,
-            shuffle=False,
-            num_workers=4,
-            pin_memory=True,
-        )
+        return self.val_loader
 
     # TODO: Uncomment this later
     """

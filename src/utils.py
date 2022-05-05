@@ -49,7 +49,6 @@ def render(
     Lx: int,
     Ld: int,
     chunk_size: int,
-    white_bck: bool,
 ) -> Tuple[Tensor, Tensor]:
     """Render color along a ray
 
@@ -60,7 +59,6 @@ def render(
         model_coarse/fine: Coarse and fine NeRF models
         Lx/Ld: Number of components to use for positional encoding
         chunk_size: Number of points to process at a time
-        white_bck: Whether the image has white background
     Outputs -
         c [B * 3]: Color of ray
         w [B * n]: Weights of points sampled along the ray
