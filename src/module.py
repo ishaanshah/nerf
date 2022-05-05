@@ -3,6 +3,7 @@ import wandb
 import numpy as np
 import torch
 import trimesh
+
 # TODO: Install this instead of importing
 from ..lib.mesh_to_sdf.mesh_to_sdf import mesh_to_voxels
 from tqdm import tqdm
@@ -54,21 +55,21 @@ class NeRFModule(LightningModule):
         parser.add_argument(
             "--optimizer",
             type=str,
-            default='adam',
-            choices=['adam', 'radam'],
+            default="adam",
+            choices=["adam", "radam"],
             help="which optimizer to use",
         )
         parser.add_argument(
             "--mesh",
             type=str,
-            default='',
+            default="",
             help="mesh to calculate SDF for",
         )
         parser.add_argument(
             "--voxel_size",
             type=int,
             default=128,
-            help='Size of voxel gride to calculate SDF for (only used if --mesh is provide)'
+            help="Size of voxel gride to calculate SDF for (only used if --mesh is provide)",
         )
         return parent_parser
 
@@ -85,23 +86,32 @@ class NeRFModule(LightningModule):
             self.model_coarse = NeRFModel(args.lx * 6, args.ld * 6)
             self.model_fine = NeRFModel(args.lx * 6, args.ld * 6)
         else:
-            self.model_coarse = NeRFModel(args.lx * 7, args.ld * 7)
-            self.model_fine = NeRFModel(args.lx * 7, args.ld * 7)
+            self.model_coarse = NeRFModel(args.lx * 8, args.ld * 6)
+            self.model_fine = NeRFModel(args.lx * 8, args.ld * 6)
 
         # Loss
         self.criterion = nn.MSELoss(reduction="mean")
 
         # Metrics
         self.psnr = metrics.PeakSignalNoiseRatio()
-        self.ssim = metrics.StructuralSimilarityIndexMeasure()
+        # TODO: Enable this
+        # self.ssim = metrics.StructuralSimilarityIndexMeasure()
 
         # Create datasets
         data_dir = Path(args.data_dir)
+        if args.img_list:
+            img_list = args.img_list.split(",")
+        else:
+            img_list = []
+
         train_dataset = NeRFBlenderDataSet(
-            mode="train", data_dir=data_dir, scale=self.args.scale, img_list=args.images
+            mode="train", data_dir=data_dir, scale=self.args.scale, img_list=img_list
         )
         val_dataset = NeRFBlenderDataSet(
-            mode="val", data_dir=data_dir, scale=self.args.scale, valid_count=args.valid_count
+            mode="val",
+            data_dir=data_dir,
+            scale=self.args.scale,
+            valid_count=args.valid_count,
         )
         self.train_loader = DataLoader(
             train_dataset,
@@ -130,12 +140,14 @@ class NeRFModule(LightningModule):
                     if loader == self.val_loader:
                         o = o.squeeze()
                         d = d.squeeze()
-                    batch_bounds = torch.cat((o + near.unsqueeze(-1)*d, o + far.unsqueeze(-1)*d), dim=0)
+                    batch_bounds = torch.cat(
+                        (o + near.unsqueeze(-1) * d, o + far.unsqueeze(-1) * d), dim=0
+                    )
                     mins = torch.min(mins, torch.min(batch_bounds, dim=0)[0])
                     maxs = torch.min(maxs, torch.max(batch_bounds, dim=0)[0])
 
             # Get dimension along which bound is highest
-            idx = torch.max(maxs-mins)[0]
+            idx = torch.max(maxs - mins)[0]
             self.bounds = (mins[idx], maxs[idx])
 
             # Calculate SDF voxel grid
@@ -165,41 +177,42 @@ class NeRFModule(LightningModule):
                 len(o[i : i + chunk]), self.args.sample_coarse, near, far
             )
 
-            #TODO pass SDF instead of None
+            # TODO pass SDF instead of None
 
             c_c, w_c = utils.render(
-                    o[i : i + chunk],
-                    d[i : i + chunk],
-                    t_coarse,
-                    None,
-                    self.model_coarse,
-                    self.args.lx,
-                    self.args.ld,
-                    len(o[i : i + chunk]),
-                )
+                o[i : i + chunk],
+                d[i : i + chunk],
+                t_coarse,
+                None,
+                self.model_coarse,
+                self.args.lx,
+                self.args.ld,
+                len(o[i : i + chunk]),
+            )
 
             colors_c += [c_c]
 
             # Fine sampling
-            t_bins = (t_coarse[:,:-1] + t_coarse[:,1:]) / 2
-            t_fine = utils.sample_fine(self.args.sample_fine, t_bins, w_c[:,1:-1]).detach()
+            t_bins = (t_coarse[:, :-1] + t_coarse[:, 1:]) / 2
+            t_fine = utils.sample_fine(
+                self.args.sample_fine, t_bins, w_c[:, 1:-1]
+            ).detach()
             t_fine = torch.cat((t_fine, t_coarse), dim=1)
             t_fine = torch.sort(t_fine, dim=1)[0]
             c_f, _ = utils.render(
-                    o[i : i + chunk],
-                    d[i : i + chunk],
-                    t_fine,
-                    None,
-                    self.model_fine,
-                    self.args.lx,
-                    self.args.ld,
-                    len(o[i : i + chunk]),
-                )
+                o[i : i + chunk],
+                d[i : i + chunk],
+                t_fine,
+                None,
+                self.model_fine,
+                self.args.lx,
+                self.args.ld,
+                len(o[i : i + chunk]),
+            )
             colors_f += [c_f]
 
-
-        colors_coarse = torch.cat(colors_c, dim=0) # B * 3
-        colors_fine = torch.cat(colors_f, dim=0) # B * 3
+        colors_coarse = torch.cat(colors_c, dim=0)  # B * 3
+        colors_fine = torch.cat(colors_f, dim=0)  # B * 3
 
         return colors_coarse, colors_fine
 
@@ -209,7 +222,7 @@ class NeRFModule(LightningModule):
         cc_p, cf_p = self(batch)
         c_loss = self.criterion(cc_p, c)
         f_loss = self.criterion(cf_p, c)
-        loss = c_loss+f_loss
+        loss = c_loss + f_loss
 
         # Logging
         # TODO: Fix SSIM
@@ -231,7 +244,7 @@ class NeRFModule(LightningModule):
         cc_p, cf_p = self(nbatch)
         c_loss = self.criterion(cc_p, c)
         f_loss = self.criterion(cf_p, c)
-        loss = c_loss+f_loss
+        loss = c_loss + f_loss
 
         # Logging
         # TODO: Fix SSIM
@@ -279,13 +292,19 @@ class NeRFModule(LightningModule):
     """
 
     def configure_optimizers(self):
-        if self.args.optimizer == 'adam':
+        if self.args.optimizer == "adam":
             optimizer = optim.Adam(
-                params=list(self.model_coarse.parameters()) + list(self.model_fine.parameters()), lr=self.args.lr, eps=1e-7
+                params=list(self.model_coarse.parameters())
+                + list(self.model_fine.parameters()),
+                lr=self.args.lr,
+                eps=1e-7,
             )
         else:
             optimizer = optim.RAdam(
-                params=list(self.model_coarse.parameters()) + list(self.model_fine.parameters()), lr=self.args.lr, eps=1e-7
+                params=list(self.model_coarse.parameters())
+                + list(self.model_fine.parameters()),
+                lr=self.args.lr,
+                eps=1e-7,
             )
         # TODO: Configure scheduler
         # decay_rate = 0.1

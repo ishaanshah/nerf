@@ -38,7 +38,16 @@ if __name__ == "__main__":
         "--scale", type=float, default=1.0, help="scaling factor for images"
     )
     parser.add_argument(
-        "--valid_count", type=int, default=-1, help="how many images to use for validation (-1 for all)"
+        "--valid_count",
+        type=int,
+        default=-1,
+        help="how many images to use for validation (-1 for all)",
+    )
+    parser.add_argument(
+        "--img_list",
+        type=str,
+        default="",
+        help="indices of subset of images to consider while training",
     )
 
     # Model specific arguments

@@ -18,7 +18,7 @@ def positional_encoding(vec: Tensor, L: int) -> Tensor:
         Refer to https://github.com/bmild/nerf/issues/12
     """
     B, _ = vec.shape
-    powers = torch.pow(2, torch.arange(L, device=vec.device)) # L
+    powers = torch.pow(2, torch.arange(L, device=vec.device))  # L
     x = torch.unsqueeze(vec, dim=-1) * powers  # B * 3 * L
     x = x.reshape(B, -1)  # B * 3L
     return torch.concat((torch.sin(x), torch.cos(x)), dim=1)
@@ -65,11 +65,11 @@ def render(
         w [B * n]: Weights of points sampled along the ray
     """
     B, n = t.shape
-    pos = o[:,None,:].repeat(1, n, 1)
+    pos = o[:, None, :].repeat(1, n, 1)
     pos = pos + t[..., None] * d[:, None, :]  # B * n * 3
     dir = d[:, None, :].repeat(1, n, 1)
 
-    #TODO - positionally encode SDF
+    # TODO - positionally encode SDF
     # Perform positional encoding on position and direction vectors
     pos = pos.reshape(-1, 3).float()
     dir = dir.reshape(-1, 3).float()
@@ -80,9 +80,7 @@ def render(
         encoded_pos = positional_encoding(pos[i : i + chunk_size], lx).float()
         encoded_dir = positional_encoding(dir[i : i + chunk_size], ld).float()
         # Get color with coarse sampling
-        sigma_, color_ = model(
-            encoded_pos, encoded_dir
-        )
+        sigma_, color_ = model(encoded_pos, encoded_dir)
         sigma[i : i + chunk_size] = sigma_.reshape(chunk_size)
         color[i : i + chunk_size] = color_.reshape(chunk_size, 3)
 
@@ -100,9 +98,9 @@ def render(
     sig_del = sigma * delta
     alpha = 1 - torch.exp(-sig_del)
     t = torch.cat((torch.ones_like(alpha[:, :1]), 1 - alpha + 1e-10), dim=-1)
-    t = torch.cumprod(t, dim=-1)[:,:-1]
+    t = torch.cumprod(t, dim=-1)[:, :-1]
 
-    w = alpha * t # B * n
+    w = alpha * t  # B * n
     c = torch.sum(w.unsqueeze(-1) * color, 1)
 
     return c, w

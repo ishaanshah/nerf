@@ -19,7 +19,7 @@ class NeRFBlenderDataSet(Dataset):
         scale: float,
         valid_count: int = -1,
         test_count: int = -1,
-        img_list: Optional[List] = None
+        img_list: List[str] = [],
     ):
         """
         Inputs:
@@ -62,7 +62,10 @@ class NeRFBlenderDataSet(Dataset):
             directions = []
             rgbs = []
             for frame in self.frames["frames"]:
-                if self.img_list and (not int(os.path.basename(frame['file_path']).split('_')[1]) in self.img_list):
+                if self.img_list and (
+                    not int(os.path.basename(frame["file_path"]).split("_")[1])
+                    in self.img_list
+                ):
                     continue
 
                 o, d, img = self.gen_from_frame(frame)
