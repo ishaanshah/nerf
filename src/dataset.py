@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from .utils import get_rays
 from torch import Tensor
-from typing import Tuple
+from typing import Tuple, List, Optional
 from PIL import Image
 from torch.utils.data import Dataset
 
@@ -19,6 +19,7 @@ class NeRFBlenderDataSet(Dataset):
         scale: float,
         valid_count: int = -1,
         test_count: int = -1,
+        img_list: Optional[List] = None
     ):
         """
         Inputs:
@@ -26,12 +27,14 @@ class NeRFBlenderDataSet(Dataset):
             data_dir: Base directory to get files from
             scale: Image scaling
             valid/test_count: Number of frames to use for validation/test (all if -1)
+            img_list: The frames to consider while training
         """
         self.mode = mode
         self.data_dir = data_dir
         self.valid_count = valid_count
         self.test_count = test_count
         self.white_bck = False
+        self.img_list = img_list
 
         with open(data_dir / f"transforms_{mode}.json") as f:
             self.frames = json.load(f)
@@ -59,6 +62,9 @@ class NeRFBlenderDataSet(Dataset):
             directions = []
             rgbs = []
             for frame in self.frames["frames"]:
+                if self.img_list and (not int(os.path.basename(frame['file_path']).split('_')[1]) in self.img_list):
+                    continue
+
                 o, d, img = self.gen_from_frame(frame)
                 origins.append(o)
                 directions.append(d)

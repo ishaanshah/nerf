@@ -1,7 +1,7 @@
 import torch
 from .model import NeRFModel
 from torch import Tensor
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 def positional_encoding(vec: Tensor, L: int) -> Tensor:
@@ -46,9 +46,10 @@ def render(
     d: Tensor,
     t: Tensor,
     model: NeRFModel,
-    Lx: int,
-    Ld: int,
+    lx: int,
+    ld: int,
     chunk_size: int,
+    sdf: Optional[Tensor],
 ) -> Tuple[Tensor, Tensor]:
     """Render color along a ray
 
@@ -57,7 +58,7 @@ def render(
         d [B * 3]: Direction of the ray
         t [B * n]: Points to sample on the ray
         model_coarse/fine: Coarse and fine NeRF models
-        Lx/Ld: Number of components to use for positional encoding
+        lx/ld: Number of components to use for positional encoding
         chunk_size: Number of points to process at a time
     Outputs -
         c [B * 3]: Color of ray
@@ -68,6 +69,7 @@ def render(
     pos = pos + t[..., None] * d[:, None, :]  # B * n * 3
     dir = d[:, None, :].repeat(1, n, 1)
 
+    #TODO - positionally encode SDF
     # Perform positional encoding on position and direction vectors
     pos = pos.reshape(-1, 3).float()
     dir = dir.reshape(-1, 3).float()
@@ -75,8 +77,8 @@ def render(
     sigma = torch.zeros(B * n, dtype=torch.float32, device=o.device)
     color = torch.zeros((B * n, 3), dtype=torch.float32, device=o.device)
     for i in range(0, B * n, chunk_size):
-        encoded_pos = positional_encoding(pos[i : i + chunk_size], Lx).float()
-        encoded_dir = positional_encoding(dir[i : i + chunk_size], Ld).float()
+        encoded_pos = positional_encoding(pos[i : i + chunk_size], lx).float()
+        encoded_dir = positional_encoding(dir[i : i + chunk_size], ld).float()
         # Get color with coarse sampling
         sigma_, color_ = model(
             encoded_pos, encoded_dir
@@ -102,10 +104,6 @@ def render(
 
     w = alpha * t # B * n
     c = torch.sum(w.unsqueeze(-1) * color, 1)
-
-    # If background is white set color to 1 where alpha is 0
-    if white_bck:
-        c = c + (1 - w.sum(1).unsqueeze(-1))
 
     return c, w
 
