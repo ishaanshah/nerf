@@ -5,7 +5,7 @@ import torch
 import trimesh
 
 # TODO: Install this instead of importing
-from ..lib.mesh_to_sdf.mesh_to_sdf import mesh_to_voxels
+# from ..lib.mesh_to_sdf.mesh_to_sdf import mesh_to_voxels
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from pytorch_lightning.loggers import WandbLogger
@@ -104,24 +104,24 @@ class NeRFModule(LightningModule):
         else:
             img_list = []
 
-        train_dataset = NeRFBlenderDataSet(
+        self.train_dataset = NeRFBlenderDataSet(
             mode="train", data_dir=data_dir, scale=self.args.scale, img_list=img_list
         )
-        val_dataset = NeRFBlenderDataSet(
+        self.val_dataset = NeRFBlenderDataSet(
             mode="val",
             data_dir=data_dir,
             scale=self.args.scale,
             valid_count=args.valid_count,
         )
         self.train_loader = DataLoader(
-            train_dataset,
+            self.train_dataset,
             batch_size=self.args.batch_size,
             shuffle=True,
             num_workers=4,
             pin_memory=True,
         )
         self.val_loader = DataLoader(
-            val_dataset,
+            self.val_dataset,
             batch_size=1,
             shuffle=False,
             num_workers=4,
@@ -144,11 +144,14 @@ class NeRFModule(LightningModule):
                         (o + near.unsqueeze(-1) * d, o + far.unsqueeze(-1) * d), dim=0
                     )
                     mins = torch.min(mins, torch.min(batch_bounds, dim=0)[0])
-                    maxs = torch.min(maxs, torch.max(batch_bounds, dim=0)[0])
+                    maxs = torch.max(maxs, torch.max(batch_bounds, dim=0)[0])
 
             # Get dimension along which bound is highest
-            idx = torch.max(maxs - mins)[0]
+            print(maxs, mins)
+            idx = torch.argmax(maxs - mins)
             self.bounds = (mins[idx], maxs[idx])
+            print(self.bounds)
+            exit()
 
             # Calculate SDF voxel grid
             # mesh = trimesh.load_from_mesh:
@@ -178,16 +181,15 @@ class NeRFModule(LightningModule):
             )
 
             # TODO pass SDF instead of None
-
             c_c, w_c = utils.render(
                 o[i : i + chunk],
                 d[i : i + chunk],
                 t_coarse,
-                None,
                 self.model_coarse,
                 self.args.lx,
                 self.args.ld,
                 len(o[i : i + chunk]),
+                None
             )
 
             colors_c += [c_c]
@@ -199,15 +201,16 @@ class NeRFModule(LightningModule):
             ).detach()
             t_fine = torch.cat((t_fine, t_coarse), dim=1)
             t_fine = torch.sort(t_fine, dim=1)[0]
+            # TODO pass SDF instead of None
             c_f, _ = utils.render(
                 o[i : i + chunk],
                 d[i : i + chunk],
                 t_fine,
-                None,
                 self.model_fine,
                 self.args.lx,
                 self.args.ld,
                 len(o[i : i + chunk]),
+                None,
             )
             colors_f += [c_f]
 
@@ -266,6 +269,9 @@ class NeRFModule(LightningModule):
             data = []
             w = int(np.floor(self.val_dataset.w))
             h = int(np.floor(self.val_dataset.h))
+            # NOTE: Uncomment for crop
+            # w = int(w*0.8)
+            # h = int(h*0.8)
             for i in range(0, min(5, len(outputs))):
                 output = outputs[i]
                 gt = output["gt"].reshape(h, w, 3).cpu().numpy() * 255

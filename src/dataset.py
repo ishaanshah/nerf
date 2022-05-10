@@ -43,6 +43,10 @@ class NeRFBlenderDataSet(Dataset):
         self.w = int(np.floor(800 * scale))
         self.h = int(np.floor(800 * scale))
 
+        # NOTE: Uncomment for center crop
+        # self.wc = int(self.w*0.8)
+        # self.hc = int(self.h*0.8)
+
         # Focal length
         self.f = (self.w / 2) * (1 / np.tan(self.frames["camera_angle_x"] / 2))
 
@@ -51,6 +55,11 @@ class NeRFBlenderDataSet(Dataset):
         self.far = 6.0
 
         # Directions are same in camera coordinates for all
+        # NOTE: Uncomment for center crop
+        # x, y = torch.meshgrid(torch.arange(self.wc), torch.arange(self.hc), indexing="xy")
+        # self.dirs = torch.dstack(
+        #     [(x - self.wc / 2) / self.f, -(y - self.hc / 2) / self.f, -torch.ones_like(y)]
+        # )
         x, y = torch.meshgrid(torch.arange(self.w), torch.arange(self.h), indexing="xy")
         self.dirs = torch.dstack(
             [(x - self.w / 2) / self.f, -(y - self.h / 2) / self.f, -torch.ones_like(y)]
@@ -92,6 +101,13 @@ class NeRFBlenderDataSet(Dataset):
         img = Image.alpha_composite(bkg, img).convert("RGB")
         img = img.resize((self.w, self.h))
         img = F.to_tensor(img).double()
+
+        # NOTE: Uncomment for center crop
+        # img = F.center_crop(img, [self.wc, self.hc])
+
+        # NOTE: Uncomment for viewing input image (for debuging)
+        # F.to_pil_image(img).save('debug.png')
+
         img = img.reshape(3, -1).t()
         return o, d, img
 

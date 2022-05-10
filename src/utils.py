@@ -49,7 +49,7 @@ def render(
     lx: int,
     ld: int,
     chunk_size: int,
-    sdf: Optional[Tensor],
+    sdf: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
     """Render color along a ray
 
