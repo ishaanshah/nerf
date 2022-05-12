@@ -50,6 +50,7 @@ def render(
     ld: int,
     chunk_size: int,
     sdf: Optional[Tensor] = None,
+    bounds: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
     """Render color along a ray
 
@@ -60,6 +61,8 @@ def render(
         model_coarse/fine: Coarse and fine NeRF models
         lx/ld: Number of components to use for positional encoding
         chunk_size: Number of points to process at a time
+        sdf [V * V * V]: Voxel cube of length V containing SDF values
+        bounds [2]: Scene bounds corresponding to SDF voxel
     Outputs -
         c [B * 3]: Color of ray
         w [B * n]: Weights of points sampled along the ray
@@ -69,16 +72,34 @@ def render(
     pos = pos + t[..., None] * d[:, None, :]  # B * n * 3
     dir = d[:, None, :].repeat(1, n, 1)
 
-    # TODO - positionally encode SDF
-    # Perform positional encoding on position and direction vectors
     pos = pos.reshape(-1, 3).float()
     dir = dir.reshape(-1, 3).float()
+
+    idx = None
+    if not (sdf is None or bounds is None):
+        # Calculate SDF indices
+        idx = pos - bounds[0]
+        res = sdf.shape[0]
+        idx = torch.floor((res / (bounds[1] - bounds[0])) * idx).long()  # B * n * 3
 
     sigma = torch.zeros(B * n, dtype=torch.float32, device=o.device)
     color = torch.zeros((B * n, 3), dtype=torch.float32, device=o.device)
     for i in range(0, B * n, chunk_size):
+        # Perform positional encoding on position, direction and optionally sdf
         encoded_pos = positional_encoding(pos[i : i + chunk_size], lx).float()
         encoded_dir = positional_encoding(dir[i : i + chunk_size], ld).float()
+
+        if not (sdf is None or idx is None):
+            tmp = idx[i : i + chunk_size]
+            encoded_sdf = (
+                positional_encoding(
+                    sdf[tmp[:, 0], tmp[:, 1], tmp[:, 2]].unsqueeze(-1), lx
+                )
+                .to(o.device)
+                .float()
+            )
+            encoded_pos = torch.cat((encoded_pos, encoded_sdf), dim=-1)
+
         # Get color with coarse sampling
         sigma_, color_ = model(encoded_pos, encoded_dir)
         sigma[i : i + chunk_size] = sigma_.reshape(chunk_size)

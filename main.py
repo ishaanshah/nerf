@@ -45,8 +45,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--img_list",
-        type=str,
-        default="",
+        nargs="*",
+        type=int,
+        default=[],
         help="indices of subset of images to consider while training",
     )
 

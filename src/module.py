@@ -2,10 +2,7 @@ import torchmetrics as metrics
 import wandb
 import numpy as np
 import torch
-import trimesh
-
-# TODO: Install this instead of importing
-# from ..lib.mesh_to_sdf.mesh_to_sdf import mesh_to_voxels
+import json
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from pytorch_lightning.loggers import WandbLogger
@@ -60,16 +57,26 @@ class NeRFModule(LightningModule):
             help="which optimizer to use",
         )
         parser.add_argument(
-            "--mesh",
-            type=str,
-            default="",
-            help="mesh to calculate SDF for",
+            "--decay_step",
+            nargs="+",
+            type=int,
+            default=[20],
+            help="scheduler decay step",
         )
         parser.add_argument(
-            "--voxel_size",
-            type=int,
-            default=128,
-            help="Size of voxel gride to calculate SDF for (only used if --mesh is provide)",
+            "--decay_gamma", type=float, default=0.1, help="learning rate decay amount"
+        )
+        parser.add_argument(
+            "--sdf",
+            type=str,
+            default="",
+            help="path to file which stores the SDF",
+        )
+        parser.add_argument(
+            "--calculate_bounds",
+            action="store_true",
+            default=False,
+            help="whether to calculate scene bounds (useful for debugging and calculating SDF)",
         )
         return parent_parser
 
@@ -82,7 +89,7 @@ class NeRFModule(LightningModule):
         self.save_hyperparameters()
 
         # Models
-        if self.args.mesh == "":
+        if self.args.sdf == "":
             self.model_coarse = NeRFModel(args.lx * 6, args.ld * 6)
             self.model_fine = NeRFModel(args.lx * 6, args.ld * 6)
         else:
@@ -99,13 +106,12 @@ class NeRFModule(LightningModule):
 
         # Create datasets
         data_dir = Path(args.data_dir)
-        if args.img_list:
-            img_list = args.img_list.split(",")
-        else:
-            img_list = []
 
         self.train_dataset = NeRFBlenderDataSet(
-            mode="train", data_dir=data_dir, scale=self.args.scale, img_list=img_list
+            mode="train",
+            data_dir=data_dir,
+            scale=self.args.scale,
+            img_list=args.img_list,
         )
         self.val_dataset = NeRFBlenderDataSet(
             mode="val",
@@ -128,7 +134,7 @@ class NeRFModule(LightningModule):
             pin_memory=True,
         )
 
-        if args.mesh:
+        if args.calculate_bounds:
             # Calculate scene bounds
             print("Calculating scene bounds...")
             mins = 9e15 * torch.ones(3)
@@ -147,15 +153,21 @@ class NeRFModule(LightningModule):
                     maxs = torch.max(maxs, torch.max(batch_bounds, dim=0)[0])
 
             # Get dimension along which bound is highest
-            print(maxs, mins)
-            idx = torch.argmax(maxs - mins)
-            self.bounds = (mins[idx], maxs[idx])
-            print(self.bounds)
-            exit()
+            print("Bounding Box:", maxs, mins)
+            print("Bounds:", maxs - mins)
 
-            # Calculate SDF voxel grid
-            # mesh = trimesh.load_from_mesh:
-            # mesh_to_voxels(
+            # idx = torch.argmax(maxs - mins)
+            # print(self.bounds)
+
+        self.sdf = None
+        self.bounds = None
+        if args.sdf:
+            # Read SDF
+            print("Using SDF as input")
+            with open(args.sdf) as f:
+                data = json.load(f)
+                self.sdf = torch.Tensor(data["sdf"])
+                self.bounds = torch.Tensor(data["bounds"])
 
     def forward(self, batch) -> Tuple[Tensor, Tensor]:
         """
@@ -180,7 +192,6 @@ class NeRFModule(LightningModule):
                 len(o[i : i + chunk]), self.args.sample_coarse, near, far
             )
 
-            # TODO pass SDF instead of None
             c_c, w_c = utils.render(
                 o[i : i + chunk],
                 d[i : i + chunk],
@@ -189,9 +200,9 @@ class NeRFModule(LightningModule):
                 self.args.lx,
                 self.args.ld,
                 len(o[i : i + chunk]),
-                None
+                self.sdf,
+                self.bounds,
             )
-
             colors_c += [c_c]
 
             # Fine sampling
@@ -201,7 +212,7 @@ class NeRFModule(LightningModule):
             ).detach()
             t_fine = torch.cat((t_fine, t_coarse), dim=1)
             t_fine = torch.sort(t_fine, dim=1)[0]
-            # TODO pass SDF instead of None
+
             c_f, _ = utils.render(
                 o[i : i + chunk],
                 d[i : i + chunk],
@@ -210,7 +221,8 @@ class NeRFModule(LightningModule):
                 self.args.lx,
                 self.args.ld,
                 len(o[i : i + chunk]),
-                None,
+                self.sdf,
+                self.bounds,
             )
             colors_f += [c_f]
 
@@ -236,6 +248,7 @@ class NeRFModule(LightningModule):
         self.log("train/f_loss", f_loss, prog_bar=True)
         self.log("train/loss", loss)
         self.log("train/psnr", psnr, prog_bar=True)
+        self.log("lr", self.optimizers().param_groups[0]["lr"])
         # self.log("train/ssim", ssim)
 
         return loss
@@ -312,9 +325,8 @@ class NeRFModule(LightningModule):
                 lr=self.args.lr,
                 eps=1e-7,
             )
-        # TODO: Configure scheduler
-        # decay_rate = 0.1
-        # lrate_decay = self.args.lr_decay
-        # func = lambda step: 1 / (1 + decay_rate*lrate_decay)
-        # scheduler = lr_scheduler.LambdaLR(optimizer=optimizer, gamma=0.99)
-        return optimizer
+
+        scheduler = lr_scheduler.MultiStepLR(
+            optimizer, milestones=self.args.decay_step, gamma=self.args.decay_gamma
+        )
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
